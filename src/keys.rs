@@ -583,6 +583,20 @@ impl SecretKey {
 
 serde_boilerplate!(SecretKey);
 
+impl SecretKey {
+    #[allow(missing_docs)]
+    #[doc(hidden)]
+    pub fn exponent(&self) -> &Scalar {
+        &self.key
+    }
+
+    #[allow(missing_docs)]
+    #[doc(hidden)]
+    pub fn nonce(&self) -> &[u8; 32] {
+        &self.nonce
+    }
+}
+
 
 /// A Ristretto Schnorr public key.
 ///
