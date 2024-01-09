@@ -18,6 +18,7 @@ use core::ops::Mul;
 use curve25519_dalek::constants;
 use curve25519_dalek::ristretto::{CompressedRistretto,RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::traits::VartimeMultiscalarMul;
 
 use super::*;
 use crate::context::{SigningTranscript,SigningContext};
@@ -244,6 +245,23 @@ impl SecretKey {
 }
 
 
+trait VarTimeDoubleScalarMul {
+    fn vartime_double_scalar_mul(&self, scalar1: &Scalar, point1: &RistrettoPoint, scalar2: &Scalar) -> RistrettoPoint;
+}
+
+impl VarTimeDoubleScalarMul for curve25519_dalek::ristretto::RistrettoBasepointTable {
+    fn vartime_double_scalar_mul(&self, scalar1: &Scalar, point1: &RistrettoPoint, scalar2: &Scalar) -> RistrettoPoint {
+        RistrettoPoint::vartime_double_scalar_mul_basepoint(scalar1, point1, scalar2)
+    }
+}
+
+impl VarTimeDoubleScalarMul for RistrettoPoint {
+    fn vartime_double_scalar_mul(&self, scalar1: &Scalar, point1: &RistrettoPoint, scalar2: &Scalar) -> RistrettoPoint {
+        RistrettoPoint::vartime_multiscalar_mul([*scalar1, *scalar2], [point1, self])
+    }
+}
+
+
 impl PublicKey {
     /// Verify a signature by this public key on a transcript.
     ///
@@ -251,7 +269,7 @@ impl PublicKey {
     /// `SigningContext` and a message, as well as the signature
     /// to be verified.
     #[allow(non_snake_case)]
-    pub fn verify<T: SigningTranscript>(&self, mut t: T, signature: &Signature)
+    fn verify_impl<T: SigningTranscript, Base: VarTimeDoubleScalarMul>(&self, mut t: T, signature: &Signature, base: &Base)
      -> SignatureResult<()>
     {
         let A: &RistrettoPoint = self.as_point();
@@ -261,9 +279,27 @@ impl PublicKey {
         t.commit_point(b"sign:R",&signature.R);
 
         let k: Scalar = t.challenge_scalar(b"sign:c");  // context, message, A/public_key, R=rG
-        let R = RistrettoPoint::vartime_double_scalar_mul_basepoint(&k, &(-A), &signature.s);
+        let R = base.vartime_double_scalar_mul(&k, &(-A), &signature.s);
 
         if R.compress() == signature.R { Ok(()) } else { Err(SignatureError::EquationFalse) }
+    }
+
+    /// Verify a signature by this public key on a transcript.
+    ///
+    /// Requires a `SigningTranscript`, normally created from a
+    /// `SigningContext` and a message, as well as the signature
+    /// to be verified.
+    pub fn verify<T: SigningTranscript>(&self, t: T, signature: &Signature)
+     -> SignatureResult<()>
+    {
+        self.verify_impl(t, signature, constants::RISTRETTO_BASEPOINT_TABLE)
+    }
+
+    #[doc(hidden)]
+    pub fn verify_with_base<T: SigningTranscript>(&self, t: T, signature: &Signature, base: &RistrettoPoint)
+    -> SignatureResult<()>
+    {
+        self.verify_impl(t, signature, base)
     }
 
     /// Verify a signature by this public key on a message.
