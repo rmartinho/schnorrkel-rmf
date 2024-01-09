@@ -13,6 +13,7 @@
 
 
 use core::fmt::{Debug};
+use core::ops::Mul;
 
 use curve25519_dalek::constants;
 use curve25519_dalek::ristretto::{CompressedRistretto,RistrettoPoint};
@@ -172,13 +173,15 @@ impl SecretKey {
     /// should be no attacks even if both the random number generator
     /// fails and the function gets called with the wrong public key.
     #[allow(non_snake_case)]
-    pub fn sign<T: SigningTranscript>(&self, mut t: T, public_key: &PublicKey) -> Signature
+    fn sign_impl<T: SigningTranscript, Base>(&self, mut t: T, public_key: &points::RistrettoBoth, base: &Base) -> Signature
+    where
+        for<'a, 'b> &'a Scalar: Mul<&'b Base, Output = RistrettoPoint>,
     {
         t.proto_name(b"Schnorr-sig");
         t.commit_point(b"sign:pk",public_key.as_compressed());
 
         let mut r = t.witness_scalar(b"signing",&[&self.nonce]);  // context, message, A/public_key
-        let R = (&r * constants::RISTRETTO_BASEPOINT_TABLE).compress();
+        let R = (&r * base).compress();
 
         t.commit_point(b"sign:R",&R);
 
@@ -188,6 +191,27 @@ impl SecretKey {
         zeroize::Zeroize::zeroize(&mut r);
 
         Signature{ R, s }
+    }
+
+    /// Sign a transcript with this `SecretKey`.
+    ///
+    /// Requires a `SigningTranscript`, normally created from a
+    /// `SigningContext` and a message, as well as the public key
+    /// corresponding to `self`.  Returns a Schnorr signature.
+    ///
+    /// We employ a randomized nonce here, but also incorporate the
+    /// transcript like in a derandomized scheme, but only after first
+    /// extending the transcript by the public key.  As a result, there
+    /// should be no attacks even if both the random number generator
+    /// fails and the function gets called with the wrong public key.
+    pub fn sign<T: SigningTranscript>(&self, t: T, public_key: &PublicKey) -> Signature {
+        self.sign_impl(t, &public_key.0, constants::RISTRETTO_BASEPOINT_TABLE)
+    }
+
+    #[allow(missing_docs)]
+    #[doc(hidden)]
+    pub fn sign_with_base<T: SigningTranscript>(&self, t: T, point: &points::RistrettoBoth, base: &RistrettoPoint) -> Signature {
+        self.sign_impl(t, point, base)
     }
 
     /// Sign a message with this `SecretKey`, but doublecheck the result.
